@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XAI · Disk Scheduler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#080b10;--bg2:#0d1117;--surface:#10161e;--card:#141c25;
+  --border:#1e2a38;--border2:#253040;
+  --accent:#00d68f;--accent-d:#00a66e;
+  --blue:#3b82f6;--blue-d:#2563eb;
+  --orange:#f97316;--red:#ef4444;--purple:#a78bfa;--yellow:#fbbf24;
+  --text:#e2eaf3;--muted:#607080;--muted2:#8899aa;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  --r:8px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;font-size:14px;display:flex}
+body::before{content:'';position:fixed;inset:0;z-index:0;
+  background-image:linear-gradient(rgba(0,214,143,.015) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,214,143,.015) 1px,transparent 1px);
+  background-size:32px 32px;pointer-events:none}
+
+/* ── SIDEBAR ── */
+.sidebar{position:fixed;top:0;left:0;bottom:0;width:240px;
+  background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;z-index:50}
+.brand{padding:20px 18px 16px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:12px}
+.brand-icon{width:36px;height:36px;
+  background:linear-gradient(135deg,var(--accent-d),var(--accent));
+  border-radius:8px;display:grid;place-items:center;
+  font-family:var(--mono);font-size:11px;font-weight:700;color:#000;
+  flex-shrink:0;box-shadow:0 0 18px rgba(0,214,143,.3)}
+.brand-name{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--text);letter-spacing:.06em}
+.brand-sub{font-size:9px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+nav{flex:1;padding:12px 0;overflow-y:auto}
+.nav-lbl{padding:12px 18px 4px;font-size:9px;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.1em;font-weight:600}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 18px;
+  cursor:pointer;border-left:2px solid transparent;transition:.15s;
+  font-size:13px;color:var(--muted2)}
+.nav-item:hover{color:var(--text);background:rgba(255,255,255,.03);border-left-color:var(--border2)}
+.nav-item.active{color:var(--accent);background:rgba(0,214,143,.06);border-left-color:var(--accent)}
+.nav-item svg{width:16px;height:16px;flex-shrink:0}
+.sidebar-footer{padding:14px 18px;border-top:1px solid var(--border);font-size:11px;color:var(--muted)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--red);display:inline-block;margin-right:6px;transition:.3s}
+.status-dot.ok{background:var(--accent);box-shadow:0 0 6px var(--accent)}
+
+/* ── MAIN ── */
+.main{margin-left:240px;flex:1;display:flex;flex-direction:column;position:relative;z-index:1}
+.page{display:none;padding:28px 32px;min-height:100vh}
+.page.active{display:block}
+.page-title{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px}
+.page-sub{font-size:12px;color:var(--muted);margin-bottom:24px}
+
+/* ── CARDS ── */
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:20px;margin-bottom:16px}
+.card-title{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent);
+  text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+
+/* ── FORM ELEMENTS ── */
+label{display:block;font-size:11px;color:var(--muted2);margin-bottom:5px;font-family:var(--mono)}
+input,select{width:100%;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:6px;padding:8px 11px;color:var(--text);font-size:13px;font-family:var(--sans);
+  transition:.2s;outline:none}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(0,214,143,.1)}
+select option{background:var(--bg2)}
+
+/* ── BUTTONS ── */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;
+  border-radius:6px;border:none;cursor:pointer;font-size:13px;font-family:var(--sans);
+  font-weight:500;transition:.2s;white-space:nowrap}
+.btn-primary{background:var(--accent);color:#000}
+.btn-primary:hover{background:var(--accent-d)}
+.btn-ghost{background:rgba(255,255,255,.05);color:var(--muted2);border:1px solid var(--border2)}
+.btn-ghost:hover{background:rgba(255,255,255,.09);color:var(--text)}
+.btn-blue{background:var(--blue);color:#fff}
+.btn-blue:hover{background:var(--blue-d)}
+.btn-sm{padding:6px 12px;font-size:12px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+
+/* ── METRIC BOXES ── */
+.metric-box{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 16px;text-align:center}
+.metric-val{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--accent)}
+.metric-lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:3px}
+
+/* ── TABLES ── */
+.tbl-wrap{overflow-x:auto;border-radius:var(--r);border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:var(--bg2);padding:9px 12px;text-align:left;
+  font-family:var(--mono);font-size:10px;color:var(--muted2);
+  text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border)}
+td{padding:8px 12px;border-bottom:1px solid rgba(30,42,56,.6);color:var(--text)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,.02)}
+.badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-family:var(--mono);font-weight:600}
+.badge-high{background:rgba(239,68,68,.15);color:#ef4444}
+.badge-medium{background:rgba(251,191,36,.15);color:#fbbf24}
+.badge-low{background:rgba(96,112,128,.2);color:#8899aa}
+.badge-read{background:rgba(59,130,246,.15);color:#3b82f6}
+.badge-write{background:rgba(249,115,22,.15);color:#f97316}
+.badge-ml{background:rgba(167,139,250,.15);color:#a78bfa}
+
+/* ── DISK HEAD VISUALISATION ── */
+.disk-vis{position:relative;background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--r);padding:16px;height:110px;overflow:hidden}
+.disk-track{position:absolute;bottom:28px;left:20px;right:20px;height:2px;
+  background:linear-gradient(90deg,var(--border2),var(--border));border-radius:2px}
+.disk-markers{position:absolute;bottom:12px;left:20px;right:20px;
+  display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--muted)}
+.disk-head{position:absolute;bottom:20px;width:14px;height:14px;border-radius:50%;
+  background:var(--accent);border:2px solid var(--bg2);
+  box-shadow:0 0 10px var(--accent);transition:left .4s ease;transform:translateX(-50%)}
+.disk-label{position:absolute;top:10px;left:20px;font-family:var(--mono);font-size:10px;color:var(--muted)}
+.disk-pos{position:absolute;top:10px;right:20px;font-family:var(--mono);font-size:13px;
+  color:var(--accent);font-weight:600}
+.seek-path{position:absolute;bottom:28px;height:2px;background:rgba(0,214,143,.3);
+  transition:all .4s ease;pointer-events:none}
+
+/* ── ANIMATION CANVAS ── */
+.anim-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);
+  padding:16px;margin-top:16px}
+.anim-title{font-size:10px;font-family:var(--mono);color:var(--muted2);
+  text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
+canvas.head-anim{width:100%;height:160px;display:block;border-radius:6px}
+
+/* ── EXPLANATION PANEL ── */
+.xai-panel{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);padding:14px;margin-top:8px}
+.xai-summary{font-size:12px;color:var(--text);line-height:1.6;margin-bottom:10px;
+  padding:8px 10px;background:rgba(0,214,143,.05);border-left:3px solid var(--accent);border-radius:3px}
+.xai-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.xai-feat{font-family:var(--mono);font-size:10px;color:var(--muted2);width:100px;flex-shrink:0}
+.xai-bar-bg{flex:1;background:var(--border);border-radius:3px;height:6px;overflow:hidden}
+.xai-bar-fill{height:100%;border-radius:3px;transition:width .4s}
+.xai-val{font-family:var(--mono);font-size:10px;color:var(--muted);width:52px;text-align:right;flex-shrink:0}
+
+/* ── COMPARISON CHART ── */
+.chart-wrap{position:relative;background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--r);padding:16px;margin-top:16px}
+.chart-wrap canvas{max-height:260px}
+
+/* ── REQUEST BUILDER ── */
+.req-builder{border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px;
+  position:relative;background:rgba(255,255,255,.01)}
+.req-builder:hover{border-color:var(--border2)}
+.req-num{font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:10px}
+.req-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.req-del{position:absolute;top:10px;right:10px;background:none;border:none;
+  cursor:pointer;color:var(--muted);font-size:16px;padding:2px 6px;
+  border-radius:4px;transition:.15s;line-height:1}
+.req-del:hover{color:var(--red);background:rgba(239,68,68,.1)}
+
+/* ── LOADING SPINNER ── */
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(0,214,143,.3);
+  border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── ALERT ── */
+.alert{padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:12px;display:flex;gap:8px;align-items:flex-start}
+.alert-err{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:#fca5a5}
+.alert-ok{background:rgba(0,214,143,.08);border:1px solid rgba(0,214,143,.2);color:var(--accent)}
+
+/* ── ALGO TAG ── */
+.algo-tag{display:inline-block;padding:3px 9px;border-radius:20px;font-size:10px;
+  font-family:var(--mono);font-weight:600;background:rgba(59,130,246,.15);color:var(--blue)}
+
+/* ── SCENARIO PRESETS ── */
+.preset-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.preset-btn{padding:6px 13px;border-radius:20px;border:1px solid var(--border2);
+  background:transparent;color:var(--muted2);font-size:11px;cursor:pointer;transition:.15s;
+  font-family:var(--mono)}
+.preset-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(0,214,143,.06)}
+
+/* ── RANK TABLE ── */
+.rank-row{display:flex;align-items:center;gap:12px;padding:8px 12px;
+  border-bottom:1px solid rgba(30,42,56,.5);font-size:12px}
+.rank-row:last-child{border-bottom:none}
+.rank-num{font-family:var(--mono);font-size:13px;font-weight:700;width:22px;flex-shrink:0}
+.rank-algo{font-family:var(--mono);font-size:12px;flex:1;color:var(--text)}
+.rank-seek{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:600}
+.rank-bar{flex:2;background:var(--border);border-radius:3px;height:5px;overflow:hidden}
+.rank-bar-fill{height:100%;background:var(--accent);border-radius:3px}
+/* .rank-1 .rank-num{color:var(--yellow)}
+.rank-2 .rank-num{color:var(--muted2)}
+.rank-3 .rank-num{color:var(--orange)} */
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="brand">
+    <div class="brand-icon">XAI</div>
+    <div>
+      <div class="brand-name">DISK SCHED</div>
+      <div class="brand-sub">Explainable AI</div>
+    </div>
+  </div>
+  <nav>
+    <div class="nav-lbl">Simulator</div>
+    <div class="nav-item active" data-page="p-setup">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+      </svg>
+      Request Queue
+    </div>
+    <div class="nav-item" data-page="p-run">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polygon points="5 3 19 12 5 21 5 3"/>
+      </svg>
+      Run Scheduler
+    </div>
+    <div class="nav-item" data-page="p-compare">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+      </svg>
+      Compare All
+    </div>
+    <div class="nav-lbl">Explainability</div>
+    <div class="nav-item" data-page="p-xai">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M11 8v3M11 14h.01"/>
+      </svg>
+      XAI Inspector
+    </div>
+    <div class="nav-lbl">Info</div>
+    <div class="nav-item" data-page="p-model">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+      </svg>
+      Model Info
+    </div>
+  </nav>
+  <div class="sidebar-footer">
+    <span class="status-dot" id="status-dot"></span>
+    <span id="status-txt">Connecting…</span>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+
+<!-- PAGE: REQUEST QUEUE -->
+<section class="page active" id="p-setup">
+  <div class="page-title">Request Queue Builder</div>
+  <div class="page-sub">Define I/O requests manually or sample from the 100k-row training dataset</div>
+
+  <div class="card">
+    <div class="card-title">⚙ Configuration</div>
+    <div class="grid3">
+      <div>
+        <label>Initial Head Position (0–199)</label>
+        <input type="number" id="cfg-head" min="0" max="199" value="100">
+      </div>
+      <div>
+        <label>SCAN Direction</label>
+        <select id="cfg-dir"><option value="up">Up (→ 199)</option><option value="down">Down (→ 0)</option></select>
+      </div>
+      <div>
+        <label>Sample Size (for auto-fill)</label>
+        <input type="number" id="cfg-sample" min="5" max="50" value="15">
+      </div>
+    </div>
+    <div style="margin-top:14px">
+      <div class="nav-lbl" style="padding:0 0 6px">Scenario Presets</div>
+      <div class="preset-row">
+        <button class="preset-btn" onclick="loadPreset('random')">🎲 Random</button>
+        <button class="preset-btn" onclick="loadPreset('high_load')">🔥 High Load</button>
+        <button class="preset-btn" onclick="loadPreset('sequential')">📈 Sequential</button>
+        <button class="preset-btn" onclick="loadPreset('hotspot')">🎯 Hotspot</button>
+        <button class="preset-btn" onclick="loadPreset('mixed')">🌀 Mixed Priority</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Disk head visualiser -->
+  <div class="card">
+    <div class="card-title">💿 Disk Head Position</div>
+    <div class="disk-vis" id="disk-vis">
+      <div class="disk-label">Track 0</div>
+      <div class="disk-pos" id="disk-pos-lbl">100</div>
+      <div class="disk-track"></div>
+      <div class="disk-markers">
+        <span>0</span><span>25</span><span>50</span><span>75</span>
+        <span>100</span><span>125</span><span>150</span><span>175</span><span>199</span>
+      </div>
+      <div class="disk-head" id="disk-head" style="left:50.25%"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">📋 I/O Request Queue</div>
+    <div id="req-list"></div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="addRequest()">＋ Add Request</button>
+      <button class="btn btn-ghost" onclick="sampleRequests()"><span id="sample-spin"></span>Sample from Dataset</button>
+      <button class="btn btn-ghost btn-sm" onclick="clearRequests()">Clear All</button>
+    </div>
+  </div>
+</section>
+
+<!-- PAGE: RUN SCHEDULER -->
+<section class="page" id="p-run">
+  <div class="page-title">Run Scheduler</div>
+  <div class="page-sub">Execute one algorithm and inspect execution order with XAI explanations</div>
+
+  <div class="card">
+    <div class="card-title">🎛 Algorithm Select</div>
+    <div class="grid2">
+      <div>
+        <label>Algorithm</label>
+        <select id="run-algo">
+          <option value="ml">🤖 ML Scheduler (XAI)</option>
+          <option value="fcfs">FCFS — First Come First Served</option>
+          <option value="sstf">SSTF — Shortest Seek Time First</option>
+          <option value="scan">SCAN — Elevator</option>
+          <option value="cscan">C-SCAN — Circular Elevator</option>
+          <option value="look">LOOK</option>
+          <option value="clook">C-LOOK</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:flex-end">
+        <button class="btn btn-primary" style="width:100%" onclick="runScheduler()" id="run-btn">
+          <span id="run-spin"></span> Run Algorithm
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="run-alert"></div>
+
+
+
+  <div class="card" id="run-log-card" style="display:none">
+    <div class="card-title">📄 Execution Log</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th>#</th><th>ID</th><th>Cylinder</th><th>Seek</th>
+          <th>Priority</th><th>Type</th><th>Deadline</th><th>Size</th>
+          <th id="th-score" style="display:none">ML Score</th>
+          <th id="th-xai" style="display:none">Why?</th>
+        </tr></thead>
+        <tbody id="run-log-body"></tbody>
+      </table>
+    </div>
+  </div>
+    <div class="grid3" id="run-metrics" style="display:none">
+    <div class="metric-box"><div class="metric-val" id="m-total-seek">—</div><div class="metric-lbl">Service Utility Score</div></div>
+    <div class="metric-box"><div class="metric-val" id="m-avg-seek">—</div><div class="metric-lbl">Avg Seek / Request</div></div>
+    <div class="metric-box"><div class="metric-val" id="m-n-reqs">—</div><div class="metric-lbl">Requests Served</div></div>
+  </div>
+
+  <!-- Head movement animation -->
+  <div class="anim-section" id="anim-section" style="display:none">
+    <div class="anim-title">Disk Head Movement Trace</div>
+    <canvas id="head-canvas" class="head-anim"></canvas>
+  </div>
+</section>
+
+<!-- PAGE: COMPARE ALL -->
+<section class="page" id="p-compare">
+  <div class="page-title">Algorithm Comparison</div>
+  <div class="page-sub">Run all 7 algorithms on the same queue and rank by service utility score</div>
+
+  <div class="card">
+    <div style="display:flex;gap:12px;align-items:center">
+      <button class="btn btn-primary" onclick="runCompare()" id="cmp-btn">
+        <span id="cmp-spin"></span> Compare All Algorithms
+      </button>
+      <span style="font-size:11px;color:var(--muted)">Uses current queue from Request Queue tab</span>
+    </div>
+  </div>
+
+  <div id="cmp-alert"></div>
+
+  <div id="cmp-results" style="display:none">
+    <div class="card">
+      <div class="card-title">Service Utility Score</div>
+      <div id="rank-list"></div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="anim-title">Service Utility Score by Algorithm</div>
+      <canvas id="cmp-chart"></canvas>
+    </div>
+
+    <!-- <div class="chart-wrap">
+      <div class="anim-title">Average Seek per Request</div>
+      <canvas id="avg-chart"></canvas>
+    </div> -->
+  </div>
+</section>
+
+<!-- PAGE: XAI INSPECTOR -->
+<section class="page" id="p-xai">
+  <div class="page-title">XAI Inspector</div>
+  <div class="page-sub">Predict the importance score for a single custom I/O request and inspect why</div>
+
+  <div class="card">
+    <div class="card-title">🔬 Request Parameters</div>
+    <div class="req-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+      <div><label>Cylinder (0–199)</label><input type="number" id="xi-cyl" min="0" max="199" value="75"></div>
+      <div><label>Deadline (ms)</label><input type="number" id="xi-deadline" min="1" max="499" value="80"></div>
+      <div><label>Priority</label>
+        <select id="xi-priority">
+          <option value="2">High</option><option value="1" selected>Medium</option><option value="0">Low</option>
+        </select>
+      </div>
+      <div><label>Size (KB)</label><input type="number" id="xi-size" min="4" max="1024" value="256"></div>
+      <div><label>Type</label>
+        <select id="xi-type"><option value="0">Read</option><option value="1">Write</option></select>
+      </div>
+      <div><label>Head Position</label><input type="number" id="xi-head" min="0" max="199" value="100"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="runXai()" id="xai-btn">
+        <span id="xai-spin"></span> Predict & Explain
+      </button>
+    </div>
+  </div>
+
+  <div id="xai-alert"></div>
+
+  <div id="xai-result" style="display:none">
+    <div class="grid2">
+      <div class="metric-box"><div class="metric-val" id="xai-score">—</div><div class="metric-lbl">Importance Score</div></div>
+      <div class="metric-box"><div class="metric-val" id="xai-seek">—</div><div class="metric-lbl">Seek Distance (tracks)</div></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="card-title">💡 Explanation</div>
+      <div id="xai-exp-panel"></div>
+    </div>
+  </div>
+</section>
+
+<!-- PAGE: MODEL INFO -->
+<section class="page" id="p-model">
+  <div class="page-title">Model Information</div>
+  <div class="page-sub">Details about the pre-trained GradientBoosting model</div>
+
+  <div class="grid2">
+    <div class="metric-box"><div class="metric-val" id="mi-r2">—</div><div class="metric-lbl">R² Score</div></div>
+    <div class="metric-box"><div class="metric-val" id="mi-rmse">—</div><div class="metric-lbl">RMSE</div></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="card-title">📊 Feature Importances (MDI)</div>
+    <div id="feat-imp-list"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🏗 Architecture</div>
+    <div style="font-family:var(--mono);font-size:12px;color:var(--muted2);line-height:2">
+      <div>Model type: <span style="color:var(--accent)">GradientBoostingRegressor</span></div>
+      <div>Estimators: <span style="color:var(--text)" id="mi-est">—</span></div>
+      <div>Training samples: <span style="color:var(--text)" id="mi-train">—</span></div>
+      <div>Features: <span style="color:var(--text)" id="mi-feats">—</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">📐 Scoring Formula</div>
+    <div style="font-family:var(--mono);font-size:12px;color:var(--muted2);line-height:2">
+      <div>importance = <span style="color:var(--accent)">0.35</span> × seek_norm</div>
+      <div>           + <span style="color:var(--accent)">0.30</span> × urgency_norm</div>
+      <div>           + <span style="color:var(--accent)">0.25</span> × priority_norm</div>
+      <div>           + <span style="color:var(--accent)">0.10</span> × size_norm</div>
+      <div style="margin-top:8px;color:var(--muted)">urgency_norm = 1 − (deadline / 500)</div>
+      <div style="color:var(--muted)">seek_norm = seek_distance / 199</div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+// ─────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────
+let requests = [];
+let lastResult = null;
+let cmpChart = null;
+let avgChart = null;
+
+// ─────────────────────────────────────────────
+// NAVIGATION
+// ─────────────────────────────────────────────
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    item.classList.add('active');
+    document.getElementById(item.dataset.page).classList.add('active');
+  });
+});
+
+// ─────────────────────────────────────────────
+// STATUS CHECK
+// ─────────────────────────────────────────────
+async function checkStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    const dot = document.getElementById('status-dot');
+    const txt = document.getElementById('status-txt');
+    if (d.model_exists) {
+      dot.className = 'status-dot ok';
+      txt.textContent = 'Model loaded';
+    } else {
+      dot.className = 'status-dot';
+      txt.textContent = 'Model missing';
+    }
+    // Populate model info page
+    if (d.model_r2 !== undefined) {
+      document.getElementById('mi-r2').textContent = (d.model_r2 * 100).toFixed(2) + '%';
+      document.getElementById('mi-rmse').textContent = d.model_rmse.toFixed(4);
+      document.getElementById('mi-train').textContent = d.n_train?.toLocaleString() ?? '—';
+      document.getElementById('mi-feats').textContent = (d.feature_cols || []).join(', ');
+      document.getElementById('mi-est').textContent = '200 trees';
+    }
+    if (d.importance && d.importance.length) {
+      renderFeatImp(d.importance);
+    }
+  } catch(e) {
+    document.getElementById('status-txt').textContent = 'Offline';
+  }
+}
+
+function renderFeatImp(imp) {
+  const max = Math.max(...imp.map(x => x.importance || x.pct));
+  const el  = document.getElementById('feat-imp-list');
+  el.innerHTML = imp.map(f => `
+    <div class="xai-bar-row" style="margin-bottom:10px">
+      <div class="xai-feat">${f.feature}</div>
+      <div class="xai-bar-bg" style="height:8px">
+        <div class="xai-bar-fill" style="width:${(f.importance/max*100).toFixed(1)}%;background:var(--accent)"></div>
+      </div>
+      <div class="xai-val">${(f.pct||f.importance*100).toFixed(1)}%</div>
+    </div>`).join('');
+}
+
+// ─────────────────────────────────────────────
+// HEAD VISUALISER
+// ─────────────────────────────────────────────
+document.getElementById('cfg-head').addEventListener('input', updateHead);
+function updateHead() {
+  const v = parseInt(document.getElementById('cfg-head').value) || 100;
+  const pct = (v / 199) * 100;
+  document.getElementById('disk-head').style.left = pct + '%';
+  document.getElementById('disk-pos-lbl').textContent = v;
+}
+
+// ─────────────────────────────────────────────
+// REQUEST BUILDER
+// ─────────────────────────────────────────────
+function addRequest(data = {}) {
+  const id = requests.length + 1;
+  requests.push({
+    id,
+    cylinder:  data.cylinder  ?? Math.floor(Math.random()*200),
+    deadline:  data.deadline  ?? Math.floor(Math.random()*490)+10,
+    priority:  data.priority  ?? Math.floor(Math.random()*3),
+    size:      data.size      ?? Math.floor(Math.random()*512)+4,
+    type:      data.type      ?? Math.floor(Math.random()*2),
+  });
+  renderRequests();
+}
+
+function clearRequests() {
+  requests = [];
+  renderRequests();
+}
+
+function renderRequests() {
+  const el = document.getElementById('req-list');
+  if (!requests.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px 0">No requests. Add manually or sample from dataset.</div>';
+    return;
+  }
+  el.innerHTML = requests.map((r, i) => `
+    <div class="req-builder">
+      <div class="req-num">REQUEST #${r.id}</div>
+      <button class="req-del" onclick="deleteReq(${i})">✕</button>
+      <div class="req-grid">
+        <div><label>Cylinder</label>
+          <input type="number" min="0" max="199" value="${r.cylinder}" onchange="requests[${i}].cylinder=+this.value"></div>
+        <div><label>Deadline (ms)</label>
+          <input type="number" min="1" max="499" value="${r.deadline}" onchange="requests[${i}].deadline=+this.value"></div>
+        <div><label>Priority</label>
+          <select onchange="requests[${i}].priority=+this.value">
+            <option value="2" ${r.priority==2?'selected':''}>High</option>
+            <option value="1" ${r.priority==1?'selected':''}>Medium</option>
+            <option value="0" ${r.priority==0?'selected':''}>Low</option>
+          </select></div>
+        <div><label>Size (KB)</label>
+          <input type="number" min="4" max="1024" value="${r.size}" onchange="requests[${i}].size=+this.value"></div>
+        <div><label>Type</label>
+          <select onchange="requests[${i}].type=+this.value">
+            <option value="0" ${r.type==0?'selected':''}>Read</option>
+            <option value="1" ${r.type==1?'selected':''}>Write</option>
+          </select></div>
+        <div style="display:flex;align-items:flex-end">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--muted)">
+            Seek: ${Math.abs(r.cylinder - (parseInt(document.getElementById('cfg-head').value)||100))} tracks
+          </div>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function deleteReq(i) {
+  requests.splice(i, 1);
+  requests.forEach((r, j) => r.id = j + 1);
+  renderRequests();
+}
+
+async function sampleRequests() {
+  const n    = parseInt(document.getElementById('cfg-sample').value) || 15;
+  const head = parseInt(document.getElementById('cfg-head').value) || 100;
+  const spin = document.getElementById('sample-spin');
+  spin.innerHTML = '<span class="spinner"></span> ';
+  try {
+    const res = await fetch('/api/requests/sample', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({n, head, seed: Math.floor(Math.random()*9999)})
+    });
+    const d = await res.json();
+    if (d.success) {
+      requests = d.requests;
+      renderRequests();
+    }
+  } finally {
+    spin.innerHTML = '';
+  }
+}
+
+// ─────────────────────────────────────────────
+// PRESETS
+// ─────────────────────────────────────────────
+function loadPreset(type) {
+  requests = [];
+  const head = parseInt(document.getElementById('cfg-head').value) || 100;
+  if (type === 'random') {
+    for (let i = 0; i < 12; i++) addRequest();
+  } else if (type === 'high_load') {
+    // Many high-priority, tight deadlines
+    for (let i = 0; i < 14; i++)
+      addRequest({priority:2, deadline:Math.floor(Math.random()*60)+5,
+        cylinder:Math.floor(Math.random()*200)});
+  } else if (type === 'sequential') {
+    // Cylinders in sequence — SCAN/LOOK should win
+    for (let i = 0; i < 12; i++)
+      addRequest({cylinder: i*15, deadline:200, priority:1});
+  } else if (type === 'hotspot') {
+    // Most requests clustered near cylinder 50 and 150
+    for (let i = 0; i < 14; i++)
+      addRequest({cylinder: Math.random()<0.5
+        ? Math.floor(Math.random()*30)+35
+        : Math.floor(Math.random()*30)+135});
+  } else if (type === 'mixed') {
+    // Mix of all priorities
+    for (let i = 0; i < 12; i++)
+      addRequest({priority: i%3, deadline: [30,200,400][i%3]});
+  }
+  renderRequests();
+}
+
+// ─────────────────────────────────────────────
+// RUN SINGLE ALGORITHM
+// ─────────────────────────────────────────────
+async function runScheduler() {
+  if (!requests.length) { showAlert('run-alert','err','Add at least one request first.'); return; }
+  const algo  = document.getElementById('run-algo').value;
+  const head  = parseInt(document.getElementById('cfg-head').value) || 100;
+  const dir   = document.getElementById('cfg-dir').value;
+  const btn   = document.getElementById('run-btn');
+  const spin  = document.getElementById('run-spin');
+  btn.disabled = true;
+  spin.innerHTML = '<span class="spinner"></span> ';
+  clearAlert('run-alert');
+
+  try {
+    const res = await fetch(`/api/schedule/${algo}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({requests, head, direction:dir})
+    });
+    const d = await res.json();
+    if (!d.success) { showAlert('run-alert','err',d.error); return; }
+    lastResult = d;
+    renderRunResult(d, algo);
+  } catch(e) {
+    showAlert('run-alert','err',e.message);
+  } finally {
+    btn.disabled = false;
+    spin.innerHTML = '';
+  }
+}
+
+function renderRunResult(d, algo) {
+  document.getElementById('m-total-seek').textContent = d.total_seek;
+  document.getElementById('m-avg-seek').textContent = d.avg_seek;
+  document.getElementById('m-n-reqs').textContent = d.log?.length || 0;
+  document.getElementById('run-metrics').style.display = 'grid';
+
+  const isML = algo === 'ml';
+  document.getElementById('th-score').style.display = isML ? '' : 'none';
+  document.getElementById('th-xai').style.display   = isML ? '' : 'none';
+
+  const body = document.getElementById('run-log-body');
+  body.innerHTML = (d.log || []).map((r, i) => {
+    const pBadge   = r.priority_label || ['Low','Medium','High'][r.priority]||'?';
+    const tBadge   = r.type_label || ['Read','Write'][r.type]||'?';
+    const pClass   = pBadge.toLowerCase();
+    const tClass   = tBadge.toLowerCase();
+    let scoreCell  = '';
+    let xaiCell    = '';
+    if (isML) {
+      scoreCell = `<td><span class="badge badge-ml">${(r.ml_score||0).toFixed(3)}</span></td>`;
+      const exp = r.explanation;
+      xaiCell = `<td>
+        <details style="cursor:pointer">
+          <summary style="font-size:11px;color:var(--accent)">View</summary>
+          <div class="xai-panel" style="min-width:280px">
+            <div class="xai-summary">${exp?.summary||''}</div>
+            ${(exp?.drivers||[]).slice(0,4).map(dr => `
+              <div class="xai-bar-row">
+                <div class="xai-feat">${dr.feature}</div>
+                <div class="xai-bar-bg">
+                  <div class="xai-bar-fill" style="width:${Math.min(Math.abs(dr.contribution)*200,100).toFixed(1)}%;
+                    background:${dr.contribution>=0?'var(--accent)':'var(--red)'}"></div>
+                </div>
+                <div class="xai-val">${dr.contribution>=0?'+':''}${dr.contribution.toFixed(3)}</div>
+              </div>`).join('')}
+          </div>
+        </details>
+      </td>`;
+    }
+    return `<tr>
+      <td style="color:var(--muted)">${r.position||i+1}</td>
+      <td style="font-family:var(--mono)">#${r.id}</td>
+      <td><b>${r.cylinder}</b></td>
+      <td style="color:${r.seek_time>50?'var(--orange)':'var(--text)'}">${r.seek_time??r.seek}</td>
+      <td><span class="badge badge-${pClass}">${pBadge}</span></td>
+      <td><span class="badge badge-${tClass}">${tBadge}</span></td>
+      <td style="color:${(r.deadline||999)<100?'var(--red)':'var(--text)'}">${r.deadline||'—'}</td>
+      <td>${r.size} KB</td>
+      ${scoreCell}${xaiCell}
+    </tr>`;
+  }).join('');
+
+  document.getElementById('run-log-card').style.display = 'block';
+
+  // Draw movement trace
+  drawHeadTrace(d.seek_sequence || []);
+  document.getElementById('anim-section').style.display = 'block';
+}
+
+// ─────────────────────────────────────────────
+// HEAD MOVEMENT CANVAS
+// ─────────────────────────────────────────────
+let headAnimChart = null;
+function drawHeadTrace(seq) {
+  const canvas = document.getElementById('head-canvas');
+  canvas.width  = canvas.offsetWidth * window.devicePixelRatio;
+  canvas.height = 160 * window.devicePixelRatio;
+  canvas.style.height = '160px';
+
+  if (headAnimChart) { headAnimChart.destroy(); headAnimChart = null; }
+
+  const labels = seq.map((_, i) => i === 0 ? 'Start' : `Step ${i}`);
+  headAnimChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Head Position',
+        data: seq,
+        borderColor: '#00d68f',
+        backgroundColor: 'rgba(0,214,143,.08)',
+        borderWidth: 2,
+        pointRadius: 4,
+        pointBackgroundColor: '#00d68f',
+        tension: 0,
+        fill: true,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: {duration: 600},
+      scales: {
+        x: {grid:{color:'rgba(30,42,56,.6)'}, ticks:{color:'#607080',font:{size:9}}},
+        y: {min:0, max:199, grid:{color:'rgba(30,42,56,.6)'}, ticks:{color:'#607080',font:{size:9}},
+            title:{display:true, text:'Cylinder', color:'#607080', font:{size:10}}}
+      },
+      plugins: {legend:{display:false}, tooltip:{callbacks:{
+        label: ctx => `Cylinder: ${ctx.parsed.y}`
+      }}}
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// COMPARE ALL
+// ─────────────────────────────────────────────
+async function runCompare() {
+  if (!requests.length) { showAlert('cmp-alert','err','Add at least one request first.'); return; }
+  const head = parseInt(document.getElementById('cfg-head').value) || 100;
+  const btn  = document.getElementById('cmp-btn');
+  const spin = document.getElementById('cmp-spin');
+  btn.disabled = true;
+  spin.innerHTML = '<span class="spinner"></span> ';
+  clearAlert('cmp-alert');
+
+  try {
+    const res = await fetch('/api/schedule/compare', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({requests, head})
+    });
+    const d = await res.json();
+    if (!d.success) { showAlert('cmp-alert','err',d.error); return; }
+    renderCompare(d);
+  } catch(e) {
+    showAlert('cmp-alert','err',e.message);
+  } finally {
+    btn.disabled = false;
+    spin.innerHTML = '';
+  }
+}
+
+const ALGO_COLORS = {
+  FCFS:'#3b82f6', SSTF:'#f97316', SCAN:'#a78bfa',
+  'C-SCAN':'#fbbf24', LOOK:'#00d68f', 'C-LOOK':'#ec4899', 'ML Scheduler':'#00d68f'
+};
+
+function renderCompare(d) {
+  const summary = d.summary || [];
+  const maxSeek = Math.max(...summary.map(s => s.total_seek));
+
+  // Rankings
+  const rankEl = document.getElementById('rank-list');
+  rankEl.innerHTML = summary.map((s, i) => `
+    <div class="rank-row ${i===0?'rank-1':i===1?'rank-2':i===2?'rank-3':''}">
+      <div class="rank-num">${['1','2','3'][i]||i+1}</div>
+      <div class="rank-algo">${s.algorithm}</div>
+      <div class="rank-bar"><div class="rank-bar-fill" style="width:${(s.total_seek/maxSeek*100).toFixed(1)}%"></div></div>
+      <div class="rank-seek">${s.total_seek} tracks</div>
+    </div>`).join('');
+
+  // Charts
+  const labels = summary.map(s => s.algorithm);
+  const colors = labels.map(l => ALGO_COLORS[l] || '#3b82f6');
+
+  if (cmpChart) cmpChart.destroy();
+  const ctx1 = document.getElementById('cmp-chart');
+  cmpChart = new Chart(ctx1, {
+    type:'bar', data:{
+      labels,
+      datasets:[{label:'Total Seek',data:summary.map(s=>s.total_seek),
+        backgroundColor:colors.map(c=>c+'66'),borderColor:colors,borderWidth:2,borderRadius:6}]
+    },
+    options:{responsive:true,maintainAspectRatio:false,
+      scales:{
+        x:{grid:{color:'rgba(30,42,56,.6)'},ticks:{color:'#607080'}},
+        y:{grid:{color:'rgba(30,42,56,.6)'},ticks:{color:'#607080'},
+           title:{display:true,text:'Service Utility Score',color:'#607080'}}
+      },
+      plugins:{legend:{display:false}}
+    }
+  });
+
+  if (avgChart) avgChart.destroy();
+  const ctx2 = document.getElementById('avg-chart');
+  avgChart = new Chart(ctx2, {
+    type:'bar', data:{
+      labels,
+      datasets:[{label:'Avg Seek/Req',data:summary.map(s=>s.avg_seek),
+        backgroundColor:colors.map(c=>c+'55'),borderColor:colors,borderWidth:2,borderRadius:6}]
+    },
+    options:{responsive:true,maintainAspectRatio:false,
+      scales:{
+        x:{grid:{color:'rgba(30,42,56,.6)'},ticks:{color:'#607080'}},
+        y:{grid:{color:'rgba(30,42,56,.6)'},ticks:{color:'#607080'},
+           title:{display:true,text:'Average Seek (tracks)',color:'#607080'}}
+      },
+      plugins:{legend:{display:false}}
+    }
+  });
+
+  document.getElementById('cmp-results').style.display = 'block';
+}
+
+// ─────────────────────────────────────────────
+// XAI INSPECTOR
+// ─────────────────────────────────────────────
+async function runXai() {
+  const btn  = document.getElementById('xai-btn');
+  const spin = document.getElementById('xai-spin');
+  btn.disabled = true;
+  spin.innerHTML = '<span class="spinner"></span> ';
+  clearAlert('xai-alert');
+
+  const body = {
+    cylinder:  parseInt(document.getElementById('xi-cyl').value),
+    deadline:  parseInt(document.getElementById('xi-deadline').value),
+    priority:  parseInt(document.getElementById('xi-priority').value),
+    size:      parseInt(document.getElementById('xi-size').value),
+    type:      parseInt(document.getElementById('xi-type').value),
+    head:      parseInt(document.getElementById('xi-head').value),
+  };
+
+  try {
+    const res = await fetch('/api/predict', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await res.json();
+    if (!d.success) { showAlert('xai-alert','err',d.error); return; }
+    renderXai(d, body);
+  } catch(e) {
+    showAlert('xai-alert','err',e.message);
+  } finally {
+    btn.disabled = false;
+    spin.innerHTML = '';
+  }
+}
+
+function renderXai(d, body) {
+  document.getElementById('xai-score').textContent = (d.score).toFixed(4);
+  const seekDist = Math.abs(body.cylinder - body.head);
+  document.getElementById('xai-seek').textContent = seekDist + ' tracks';
+  document.getElementById('xai-result').style.display = 'block';
+
+  const exp  = d.explanation;
+  const max  = Math.max(...(exp.drivers||[]).map(x=>Math.abs(x.contribution)));
+  const panel = document.getElementById('xai-exp-panel');
+  panel.innerHTML = `
+    <div class="xai-summary">${exp.summary}</div>
+    <div style="margin-top:12px;font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:8px">
+      FEATURE CONTRIBUTIONS (tree path Δ)
+    </div>
+    ${(exp.drivers||[]).map(dr => `
+      <div class="xai-bar-row" style="margin-bottom:8px">
+        <div class="xai-feat" style="width:120px">${dr.feature}</div>
+        <div style="font-size:10px;color:var(--muted2);width:130px;flex-shrink:0">${dr.description}</div>
+        <div class="xai-bar-bg" style="flex:1">
+          <div class="xai-bar-fill" style="
+            width:${(Math.abs(dr.contribution)/max*100).toFixed(1)}%;
+            background:${dr.contribution>=0?'var(--accent)':'var(--red)'}"></div>
+        </div>
+        <div class="xai-val">${dr.contribution>=0?'+':''}${dr.contribution.toFixed(4)}</div>
+      </div>`).join('')}`;
+}
+
+// ─────────────────────────────────────────────
+// UTILS
+// ─────────────────────────────────────────────
+function showAlert(id, type, msg) {
+  const el = document.getElementById(id);
+  const cls = type === 'err' ? 'alert-err' : 'alert-ok';
+  el.innerHTML = `<div class="alert ${cls}">⚠ ${msg}</div>`;
+}
+function clearAlert(id) { document.getElementById(id).innerHTML = ''; }
+
+// ─────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────
+renderRequests();
+checkStatus();
+</script>
+</body>
+</html>
