@@ -1,9 +1,10 @@
 """
-src/scheduler.py — ML-based disk scheduler (upgraded)
+src/scheduler.py — ML-based disk scheduler (upgraded with multi-objective metrics)
 """
 
 from __future__ import annotations
 import os
+import math
 import numpy as np
 import pandas as pd
 import joblib
@@ -126,6 +127,132 @@ def run_ml_schedule(bundle: dict, requests: List[dict],
     }
 
 
+def compute_psr(log: List[dict]) -> float:
+    """Priority Satisfaction Rate: % of HIGH priority reqs served in first 50%."""
+    if not log:
+        return 0.0
+    high_reqs = [r for r in log if r.get("priority", 0) == 2]
+    if not high_reqs:
+        return 1.0
+    cutoff = len(log) / 2.0
+    served_early = sum(1 for r in high_reqs if r.get("position", 0) <= cutoff)
+    return round(served_early / len(high_reqs), 4)
+
+
+def compute_dmr(log: List[dict]) -> float:
+    """Deadline Miss Rate: 1 seek unit = 1ms. Miss if cumulative_time > deadline."""
+    if not log:
+        return 0.0
+    cumulative_time = 0
+    missed = 0
+    for r in log:
+        cumulative_time += r.get("seek_time", 0)
+        if cumulative_time > r.get("deadline", 9999):
+            missed += 1
+    return round(missed / len(log), 4)
+
+
+def compute_fairness_gini(log: List[dict]) -> float:
+    """Gini coefficient of cumulative wait times. Lower = fairer."""
+    if not log:
+        return 0.0
+    wait_times = []
+    cumulative = 0
+    for r in log:
+        cumulative += r.get("seek_time", 0)
+        wait_times.append(cumulative)
+    wait_times = sorted(wait_times)
+    n = len(wait_times)
+    if n == 1:
+        return 0.0
+    s = sum(wait_times)
+    if s == 0:
+        return 0.0
+    gini_num = sum((i + 1) * w for i, w in enumerate(wait_times))
+    gini = (2 * gini_num) / (n * s) - (n + 1) / n
+    return round(max(0.0, min(1.0, gini)), 4)
+
+
+def compute_regret_timeline(log: List[dict]) -> List[Dict[str, Any]]:
+    """Cumulative deadline misses over service positions (bonus viz)."""
+    timeline = []
+    cumulative_time = 0
+    missed_so_far = 0
+    for i, r in enumerate(log):
+        cumulative_time += r.get("seek_time", 0)
+        if cumulative_time > r.get("deadline", 9999):
+            missed_so_far += 1
+        timeline.append({
+            "position":       i + 1,
+            "cumulative_time": cumulative_time,
+            "missed_so_far":  missed_so_far,
+            "request_id":     r.get("id", i + 1),
+            "deadline":       r.get("deadline", 9999),
+            "priority":       r.get("priority", 0),
+        })
+    return timeline
+
+
+def compute_all_metrics(results: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Compute PSR, DMR, Fairness, CPS for every algorithm."""
+    raw_metrics = {}
+    for key, res in results.items():
+        if "error" in res or "log" not in res:
+            continue
+        log = res["log"]
+        psr      = compute_psr(log)
+        dmr      = compute_dmr(log)
+        fairness = compute_fairness_gini(log)
+        raw_metrics[key] = {
+            "algorithm":       res["algorithm"],
+            "total_seek":      res["total_seek"],
+            "avg_seek":        res["avg_seek"],
+            "psr":             psr,
+            "dmr":             dmr,
+            "fairness":        fairness,
+            "regret_timeline": compute_regret_timeline(log),
+        }
+
+    if not raw_metrics:
+        return []
+
+    seeks    = [m["total_seek"] for m in raw_metrics.values()]
+    max_seek = max(seeks) if max(seeks) > 0 else 1
+    ginis    = [m["fairness"] for m in raw_metrics.values()]
+    max_gini = max(ginis) if max(ginis) > 0 else 1
+
+    summary = []
+    for key, m in raw_metrics.items():
+        seek_eff     = 1.0 - (m["total_seek"] / max_seek)
+        dl_adherence = 1.0 - m["dmr"]
+        psr_score    = m["psr"]
+        fairness_sc  = 1.0 - (m["fairness"] / max_gini if max_gini > 0 else 0)
+
+        cps = (
+            0.35 * seek_eff +
+            0.30 * dl_adherence +
+            0.25 * psr_score +
+            0.10 * fairness_sc
+        )
+
+        summary.append({
+            "algorithm":          m["algorithm"],
+            "total_seek":         m["total_seek"],
+            "avg_seek":           m["avg_seek"],
+            "psr":                round(m["psr"] * 100, 2),
+            "dmr":                round(m["dmr"] * 100, 2),
+            "fairness_gini":      round(m["fairness"], 4),
+            "seek_efficiency":    round(seek_eff * 100, 2),
+            "deadline_adherence": round(dl_adherence * 100, 2),
+            "fairness_score":     round(fairness_sc * 100, 2),
+            "cps":                round(cps * 100, 2),
+            "regret_timeline":    m["regret_timeline"],
+        })
+
+    summary.sort(key=lambda x: x["cps"], reverse=True)
+    return summary
+
+
 CLASSIC_ALGOS = list(ALGORITHM_MAP.keys())
 
 
@@ -142,14 +269,21 @@ def run_all_algorithms(bundle: dict, requests: List[dict],
     except Exception as e:
         results["ml"] = {"error": str(e)}
 
-    summary = []
+    summary = compute_all_metrics(results)
+
+    legacy_summary = []
     for key, res in results.items():
         if "error" in res:
             continue
-        summary.append({
+        legacy_summary.append({
             "algorithm":  res["algorithm"],
             "total_seek": res["total_seek"],
             "avg_seek":   res["avg_seek"],
         })
-    summary.sort(key=lambda x: x["total_seek"])
-    return {"results": results, "summary": summary}
+    legacy_summary.sort(key=lambda x: x["total_seek"])
+
+    return {
+        "results":        results,
+        "summary":        summary,
+        "legacy_summary": legacy_summary,
+    }
